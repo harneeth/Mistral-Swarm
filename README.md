@@ -235,6 +235,8 @@ Add a value to the `ActionType` enum in `actions.py`, then handle it in `executo
 
 ---
 
+NOTE: We could not complete Module 3 and Module 7 in time due to limited members and a lot of work. However, these are easy to implement.
+
 
 ## Limitations and future work
 
