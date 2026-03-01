@@ -3,6 +3,9 @@
 > A multi-agent desktop automation system built on the **Mistral AI** platform.
 > Only Mistral models and agents are used throughout.
 
+> Please store your Mistral API Key as "MISTRAL_API_KEY" in the environment variables.
+> Download model.pt (which we do not own and has an MIT license) at https://huggingface.co/Salesforce/GPA-GUI-Detector/blob/main/model.pt
+
 ---
 
 ## Overview
