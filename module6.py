@@ -47,10 +47,7 @@ class Overseer:
                 self.external_knowledge.update(info)
                 continue
 
-            if self.current_plan is None:
-                self.current_plan = plan
-                self.current_step_index = 0
-
+            self.current_plan = plan
             steps = self.current_plan["steps"]
 
             if self.current_step_index >= len(steps):
@@ -67,12 +64,14 @@ class Overseer:
             result = self.m4.run_task(task)
 
             if result.status == "success":
+                self.state.setdefault("step_history", []).append({
+                    "step_index": self.current_step_index,
+                    "step": steps[self.current_step_index]["step"],
+                    "description": steps[self.current_step_index]["description"],
+                    "status": "success"
+                })
                 self.current_step_index += 1
                 continue
-
-            if result.status == "success":
-                print("\n[Module 6] Task completed successfully.")
-                return
 
             if result.status == "error":
 
@@ -80,7 +79,7 @@ class Overseer:
 
                 # Track failure
                 self.state.setdefault("failure_counts", {})
-                step_name = task.description
+                step_name = steps[self.current_step_index]["step"]
 
                 self.state["failure_counts"][step_name] = \
                     self.state["failure_counts"].get(step_name, 0) + 1
@@ -110,9 +109,6 @@ class Overseer:
             step = ExecutionStep(
                 step_id=idx,
                 description=s["description"],
-                action_type=self._map_step_to_action_type(s["step"]),
-                target=None,
-                params={},
                 generate_text=s["requires_writing_module"],
                 text_task_description=s["description"],
                 text_context=self.state
