@@ -87,7 +87,7 @@ CRITICAL:
         )
 
         output = response.choices[0].message.content
-        print("\nRAW MODEL OUTPUT:\n", repr(output))
+        # print("\nRAW MODEL OUTPUT:\n", repr(output))
 
         try:
             structured = json.loads(output)
