@@ -131,7 +131,7 @@ class GUIDetector:
 class VisualPlanner:
 
     def __init__(self, model: str = "mistral-medium-latest"):
-        self.client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
+        self.client = Mistral(api_key="pMA2zFwdxy34txIjHZMrbCmvAKvijDxa")
         self.model = model
 
         self.system_prompt = self.system_prompt = """
@@ -149,6 +149,7 @@ You receive:
 Your job:
 - Decide the NEXT low-level actions needed.
 - If repeated failures occurred (>=3), change strategy.
+- Use execution_history.ui_change to verify whether prior actions changed the UI.
 - If the UI does not contain required elements, return:
     status = "error"
     message explaining what is missing.
@@ -183,6 +184,7 @@ Rules:
 - Use bounding box coordinates for clicks.
 - Do not output markdown.
 - Only valid JSON.
+- If recent interactive actions caused no UI change, avoid repeating them unchanged.
 
 Termination Rules:
 
@@ -286,6 +288,73 @@ class BasicTaskPerformer:
         self.executor = PyAutoGUIExecutor()
         self.writer = ContentWriterClient()
 
+    @staticmethod
+    def _bbox_iou(a: dict[str, int], b: dict[str, int]) -> float:
+        ax1, ay1 = a["x"], a["y"]
+        ax2, ay2 = a["x"] + a["width"], a["y"] + a["height"]
+        bx1, by1 = b["x"], b["y"]
+        bx2, by2 = b["x"] + b["width"], b["y"] + b["height"]
+
+        inter_x1 = max(ax1, bx1)
+        inter_y1 = max(ay1, by1)
+        inter_x2 = min(ax2, bx2)
+        inter_y2 = min(ay2, by2)
+
+        inter_w = max(0, inter_x2 - inter_x1)
+        inter_h = max(0, inter_y2 - inter_y1)
+        inter_area = inter_w * inter_h
+
+        a_area = max(0, a["width"]) * max(0, a["height"])
+        b_area = max(0, b["width"]) * max(0, b["height"])
+        union = a_area + b_area - inter_area
+
+        return (inter_area / union) if union > 0 else 0.0
+
+    def _summarize_ui_change(self, before: list[dict], after: list[dict]) -> dict[str, Any]:
+        used_after: set[int] = set()
+        matched_pairs: list[tuple[dict, dict]] = []
+        appeared: list[str] = []
+        disappeared: list[str] = []
+        moved: list[str] = []
+
+        for b in before:
+            best_idx = None
+            best_iou = 0.0
+            for idx, a in enumerate(after):
+                if idx in used_after:
+                    continue
+                if a.get("label") != b.get("label"):
+                    continue
+                iou = self._bbox_iou(b["bbox"], a["bbox"])
+                if iou > best_iou:
+                    best_iou = iou
+                    best_idx = idx
+
+            if best_idx is not None and best_iou >= 0.5:
+                used_after.add(best_idx)
+                matched_pairs.append((b, after[best_idx]))
+            else:
+                disappeared.append(str(b.get("label", "unknown")))
+
+        for idx, a in enumerate(after):
+            if idx not in used_after:
+                appeared.append(str(a.get("label", "unknown")))
+
+        for b, a in matched_pairs:
+            if self._bbox_iou(b["bbox"], a["bbox"]) < 0.85:
+                moved.append(str(a.get("label", "unknown")))
+
+        changed = bool(appeared or disappeared or moved)
+
+        return {
+            "changed": changed,
+            "appeared": appeared[:10],
+            "disappeared": disappeared[:10],
+            "moved": moved[:10],
+            "before_count": len(before),
+            "after_count": len(after)
+        }
+
     def run_task(self, task: HighLevelTask) -> ExecutionResult:
 
         all_actions: list[Action] = []
@@ -314,8 +383,10 @@ class BasicTaskPerformer:
         max_iterations = 10
         iteration = 0
         executed_actions: list[Action] = []
-
-        previous_actions = None  # 🔹 Track previous plan
+        execution_history: list[dict[str, Any]] = []
+        previous_actions: list[dict[str, Any]] | None = None
+        consecutive_repeat_count = 0
+        no_change_streak = 0
 
         while iteration < max_iterations:
             iteration += 1
@@ -331,18 +402,39 @@ class BasicTaskPerformer:
                 )
                 step_description += f"\nText to use:\n{text}"
 
+            planner_state = (
+                step.text_context.copy()
+                if isinstance(step.text_context, dict)
+                else {}
+            )
+            planner_state.update({
+                "iteration": iteration,
+                "previous_actions": previous_actions or [],
+                "consecutive_repeat_count": consecutive_repeat_count,
+                "no_change_streak": no_change_streak,
+                "execution_history": execution_history[-10:]
+            })
+
             plan = self.planner.plan(
                 step_description=step_description,
                 detections=detections,
-                state=step.text_context if isinstance(step.text_context, dict) else {}
+                state=planner_state
             )
 
-            # 🔹 Stagnation detection BEFORE execution
-            if previous_actions is not None and plan["actions"] == previous_actions:
-                raise Exception("Planner repeating same actions without progress.")
+            actions = plan.get("actions", [])
+            status = plan.get("status")
+
+            if previous_actions is not None and actions == previous_actions and status == "in_progress":
+                consecutive_repeat_count += 1
+            else:
+                consecutive_repeat_count = 0
+
+            if consecutive_repeat_count >= 3:
+                raise Exception("Planner produced the same in-progress action plan repeatedly.")
 
             # Execute actions
-            for a in plan["actions"]:
+            for a in actions:
+                before_action_detections = detections
                 action = Action(
                     action_type=ActionType[a["action_type"]],
                     params=a.get("params", {}),
@@ -357,18 +449,46 @@ class BasicTaskPerformer:
 
                 # Refresh detections after each action
                 detections = self.detector.detect()
+                ui_change = self._summarize_ui_change(before_action_detections, detections)
 
-            # 🔹 Store AFTER execution
-            previous_actions = plan["actions"]
+                if action.action_type in {
+                    ActionType.CLICK,
+                    ActionType.DOUBLE_CLICK,
+                    ActionType.TYPE,
+                    ActionType.PRESS,
+                    ActionType.SCROLL,
+                    ActionType.OPEN_APP,
+                    ActionType.OPEN_URL,
+                }:
+                    if ui_change["changed"]:
+                        no_change_streak = 0
+                    else:
+                        no_change_streak += 1
 
-            if plan["status"] == "done":
+                execution_history.append({
+                    "iteration": iteration,
+                    "action_type": action.action_type.value,
+                    "params": action.params,
+                    "description": action.description,
+                    "ui_change": ui_change
+                })
+
+                if no_change_streak >= 4:
+                    raise Exception("No meaningful UI change after multiple interactive actions.")
+
+            previous_actions = actions
+
+            if status == "done":
                 return executed_actions
 
-            if plan["status"] == "error":
+            if status == "error":
                 # Allow internal retries before escalating
                 if iteration < max_iterations:
                     continue
                 else:
-                    raise Exception(plan["message"])
+                    raise Exception(plan.get("message", "Planner returned error status."))
+
+            if status != "in_progress":
+                raise Exception(f"Planner returned unknown status: {status!r}")
 
         raise Exception("Max iterations reached for step")
