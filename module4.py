@@ -131,7 +131,7 @@ class GUIDetector:
 class VisualPlanner:
 
     def __init__(self, model: str = "mistral-medium-latest"):
-        self.client = Mistral(api_key="pMA2zFwdxy34txIjHZMrbCmvAKvijDxa")
+        self.client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
         self.model = model
 
         self.system_prompt = self.system_prompt = """
@@ -492,3 +492,4 @@ class BasicTaskPerformer:
                 raise Exception(f"Planner returned unknown status: {status!r}")
 
         raise Exception("Max iterations reached for step")
+
