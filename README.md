@@ -4,8 +4,9 @@
 > Only Mistral models and agents are used throughout.
 
 > Please store your Mistral API Key as "MISTRAL_API_KEY" in the environment variables.
-> Download model.pt (which we do not own and has an MIT license) at https://huggingface.co/Salesforce/GPA-GUI-Detector/blob/main/model.pt
+> Download model.pt (which we do not own and has an MIT license) at https://huggingface.co/Salesforce/GPA-GUI-Detector/blob/main/model.pt, and keep it in the same directory as the modules and main.py.
 > The model attempts to control your device by moving the mouse cursor, typing, etc., and because it is a simple model without much training, it can be inaccurate.
+> Run main.py for inference and update the command.
 
 ---
 
