@@ -5,6 +5,7 @@
 
 > Please store your Mistral API Key as "MISTRAL_API_KEY" in the environment variables.
 > Download model.pt (which we do not own and has an MIT license) at https://huggingface.co/Salesforce/GPA-GUI-Detector/blob/main/model.pt
+> The model attempts to control your device by moving the mouse cursor, typing, etc., and because it is a simple model without much training, it can be inaccurate.
 
 ---
 
